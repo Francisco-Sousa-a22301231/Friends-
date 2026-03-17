@@ -6,6 +6,7 @@ import '../models/gdpr_consent.dart';
 import '../services/database_service.dart';
 
 /// F5.1 & F5.2: Manages runtime permissions and GDPR consent state.
+/// On web, permissions are auto-granted (demo mode).
 class PermissionProvider extends ChangeNotifier {
   bool _hasCompletedOnboarding = false;
   GdprConsent _consent = const GdprConsent();
@@ -25,32 +26,50 @@ class PermissionProvider extends ChangeNotifier {
 
   /// Check current permission status without requesting.
   Future<void> checkPermissions() async {
-    _callLogGranted = await Permission.phone.isGranted;
-    _smsGranted = await Permission.sms.isGranted;
-    _contactsGranted = await Permission.contacts.isGranted;
+    if (kIsWeb) {
+      _callLogGranted = true;
+      _smsGranted = true;
+      _contactsGranted = true;
+    } else {
+      _callLogGranted = await Permission.phone.isGranted;
+      _smsGranted = await Permission.sms.isGranted;
+      _contactsGranted = await Permission.contacts.isGranted;
+    }
     notifyListeners();
   }
 
   /// F5.1: Request call log permission with explanation.
   Future<bool> requestCallLogPermission() async {
-    final status = await Permission.phone.request();
-    _callLogGranted = status.isGranted;
+    if (kIsWeb) {
+      _callLogGranted = true;
+    } else {
+      final status = await Permission.phone.request();
+      _callLogGranted = status.isGranted;
+    }
     notifyListeners();
     return _callLogGranted;
   }
 
   /// F5.1: Request SMS permission with explanation.
   Future<bool> requestSmsPermission() async {
-    final status = await Permission.sms.request();
-    _smsGranted = status.isGranted;
+    if (kIsWeb) {
+      _smsGranted = true;
+    } else {
+      final status = await Permission.sms.request();
+      _smsGranted = status.isGranted;
+    }
     notifyListeners();
     return _smsGranted;
   }
 
   /// F5.1: Request contacts permission with explanation.
   Future<bool> requestContactsPermission() async {
-    final status = await Permission.contacts.request();
-    _contactsGranted = status.isGranted;
+    if (kIsWeb) {
+      _contactsGranted = true;
+    } else {
+      final status = await Permission.contacts.request();
+      _contactsGranted = status.isGranted;
+    }
     notifyListeners();
     return _contactsGranted;
   }
@@ -59,12 +78,16 @@ class PermissionProvider extends ChangeNotifier {
   Future<void> updateConsent(GdprConsent newConsent) async {
     _consent = newConsent.copyWith(consentTimestamp: DateTime.now());
 
-    final db = DatabaseService.instance.db;
-    await db.insert(
-      'gdpr_consent',
-      _consent.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final dbService = DatabaseService.instance;
+    if (dbService.isWeb) {
+      await dbService.webInsert('gdpr_consent', _consent.toMap());
+    } else {
+      await dbService.db.insert(
+        'gdpr_consent',
+        _consent.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
 
     notifyListeners();
   }
@@ -77,12 +100,22 @@ class PermissionProvider extends ChangeNotifier {
 
   /// Load saved consent from database.
   Future<void> loadSavedConsent() async {
-    final db = DatabaseService.instance.db;
-    final results = await db.query('gdpr_consent', limit: 1);
-    if (results.isNotEmpty) {
-      _consent = GdprConsent.fromMap(results.first);
-      if (_consent.hasAllRequiredConsents) {
-        _hasCompletedOnboarding = true;
+    final dbService = DatabaseService.instance;
+    if (dbService.isWeb) {
+      final results = dbService.webQuery('gdpr_consent');
+      if (results.isNotEmpty) {
+        _consent = GdprConsent.fromMap(results.first);
+        if (_consent.hasAllRequiredConsents) {
+          _hasCompletedOnboarding = true;
+        }
+      }
+    } else {
+      final results = await dbService.db.query('gdpr_consent', limit: 1);
+      if (results.isNotEmpty) {
+        _consent = GdprConsent.fromMap(results.first);
+        if (_consent.hasAllRequiredConsents) {
+          _hasCompletedOnboarding = true;
+        }
       }
     }
     await checkPermissions();
