@@ -18,8 +18,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // Load contacts on first open
-    Future.microtask(() => context.read<ContactProvider>().loadContacts());
+    final provider = context.read<ContactProvider>();
+    Future.microtask(() => provider.loadContacts());
   }
 
   @override
