@@ -1,3 +1,4 @@
+import 'package:call_log/call_log.dart' as native_call_log;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../models/contact_communication.dart';
@@ -10,14 +11,25 @@ class CallLogService {
     if (kIsWeb) {
       return _generateDemoCallData();
     }
-    // Native implementation — only imported on mobile
     return await _fetchNativeCallLog();
   }
 
   Future<List<CommunicationRecord>> _fetchNativeCallLog() async {
-    // Dynamic import to avoid web compilation errors
-    final callLog = await _NativeCallLogHelper.fetch();
-    return callLog;
+    final Iterable<native_call_log.CallLogEntry> entries =
+        await native_call_log.CallLog.get();
+
+    return entries.map((entry) {
+      return CommunicationRecord(
+        id: 'call_${entry.timestamp ?? DateTime.now().millisecondsSinceEpoch}',
+        contactName: (entry.name != null && entry.name!.isNotEmpty)
+            ? entry.name!
+            : 'Unknown',
+        phoneNumber: entry.number ?? '',
+        type: CommunicationType.call,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(entry.timestamp ?? 0),
+        durationSeconds: entry.duration,
+      );
+    }).where((record) => record.phoneNumber.isNotEmpty).toList();
   }
 
   /// Fetches call history filtered by a specific phone number.
@@ -88,14 +100,5 @@ class CallLogService {
         durationSeconds: 600,
       ),
     ];
-  }
-}
-
-/// Helper to isolate native call_log import.
-class _NativeCallLogHelper {
-  static Future<List<CommunicationRecord>> fetch() async {
-    // On mobile, we would use the call_log package here.
-    // This is guarded by kIsWeb check in CallLogService.
-    return [];
   }
 }

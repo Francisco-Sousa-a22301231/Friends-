@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_sms_inbox/flutter_sms_inbox.dart' as native_sms;
 
 import '../models/contact_communication.dart';
 
@@ -14,9 +15,21 @@ class SmsService {
   }
 
   Future<List<CommunicationRecord>> _fetchNativeSms() async {
-    // On mobile, we would use the flutter_sms_inbox package here.
-    // This is guarded by kIsWeb check in SmsService.
-    return [];
+    final query = native_sms.SmsQuery();
+    final List<native_sms.SmsMessage> messages = await query.getAllSms;
+
+    return messages.map((message) {
+      final address = message.address ?? '';
+      return CommunicationRecord(
+        id: 'sms_${message.id ?? DateTime.now().millisecondsSinceEpoch}',
+        contactName: (message.sender != null && message.sender!.isNotEmpty)
+            ? message.sender!
+            : 'Unknown',
+        phoneNumber: address,
+        type: CommunicationType.sms,
+        timestamp: message.date ?? DateTime.now(),
+      );
+    }).where((record) => record.phoneNumber.isNotEmpty).toList();
   }
 
   /// Fetches SMS history filtered by a specific phone number.

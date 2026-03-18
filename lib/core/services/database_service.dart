@@ -1,6 +1,8 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+
+import '../models/contact_communication.dart';
 
 /// Local database for storing communication records and consent data.
 /// Data is stored locally on-device only (GDPR compliant - no cloud sync).
@@ -17,6 +19,11 @@ class DatabaseService {
   };
 
   DatabaseService._();
+
+  /// Test-only constructor for creating fakes/mocks.
+  @visibleForTesting
+  DatabaseService.testable();
+
 
   bool get isWeb => kIsWeb;
 
@@ -76,6 +83,97 @@ class DatabaseService {
     ''');
   }
 
+  // ── Communication Records CRUD ──
+
+  /// Inserts or replaces a batch of communication records.
+  Future<void> upsertRecords(List<CommunicationRecord> records) async {
+    if (kIsWeb) {
+      for (final record in records) {
+        final existing = _webStorage['communication_records']!;
+        existing.removeWhere((r) => r['id'] == record.id);
+        existing.add(record.toMap());
+      }
+      return;
+    }
+
+    final batch = db.batch();
+    for (final record in records) {
+      batch.insert(
+        'communication_records',
+        record.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Returns all stored communication records, newest first.
+  Future<List<CommunicationRecord>> getAllRecords() async {
+    if (kIsWeb) {
+      final rows = _webStorage['communication_records'] ?? [];
+      final records = rows.map((r) => CommunicationRecord.fromMap(r)).toList();
+      records.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return records;
+    }
+
+    final rows =
+        await db.query('communication_records', orderBy: 'timestamp DESC');
+    return rows.map((r) => CommunicationRecord.fromMap(r)).toList();
+  }
+
+  /// Returns records for a specific normalized phone number.
+  Future<List<CommunicationRecord>> getRecordsForPhone(
+      String phoneNumber) async {
+    if (kIsWeb) {
+      final rows = _webStorage['communication_records'] ?? [];
+      return rows
+          .map((r) => CommunicationRecord.fromMap(r))
+          .where((r) => _normalizePhone(r.phoneNumber) == phoneNumber)
+          .toList();
+    }
+
+    final rows = await db.query(
+      'communication_records',
+      where: 'phone_number = ?',
+      whereArgs: [phoneNumber],
+      orderBy: 'timestamp DESC',
+    );
+    return rows.map((r) => CommunicationRecord.fromMap(r)).toList();
+  }
+
+  /// Returns the timestamp of the most recent stored record, or null.
+  Future<DateTime?> getLatestRecordTimestamp() async {
+    if (kIsWeb) {
+      final rows = _webStorage['communication_records'] ?? [];
+      if (rows.isEmpty) return null;
+      final timestamps = rows.map((r) => r['timestamp'] as int);
+      final latest = timestamps.reduce((a, b) => a > b ? a : b);
+      return DateTime.fromMillisecondsSinceEpoch(latest);
+    }
+
+    final result =
+        await db.rawQuery('SELECT MAX(timestamp) as latest FROM communication_records');
+    final latest = result.first['latest'] as int?;
+    return latest != null ? DateTime.fromMillisecondsSinceEpoch(latest) : null;
+  }
+
+  /// Returns the count of stored records.
+  Future<int> getRecordCount() async {
+    if (kIsWeb) {
+      return _webStorage['communication_records']?.length ?? 0;
+    }
+
+    final result =
+        await db.rawQuery('SELECT COUNT(*) as count FROM communication_records');
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  String _normalizePhone(String phone) {
+    return phone.replaceAll(RegExp(r'[^\d+]'), '');
+  }
+
+  // ── Web helpers ──
+
   /// Insert for web fallback.
   Future<void> webInsert(String table, Map<String, dynamic> data) async {
     _webStorage[table]?.add(data);
@@ -85,6 +183,8 @@ class DatabaseService {
   List<Map<String, dynamic>> webQuery(String table) {
     return _webStorage[table] ?? [];
   }
+
+  // ── GDPR ──
 
   /// GDPR F5.5: Delete all user data.
   Future<void> deleteAllUserData() async {
